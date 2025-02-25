@@ -3,13 +3,13 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const router = express.Router();
+const crypto = require('crypto');
 
-const jwt = require('jsonwebtoken');
-const JWT_SECRET = jwt.randomBytes(64).toString('hex');
+const JWT_SECRET = crypto.randomBytes(64).toString('hex');
 
 router.post('/register', async (req, res) => {
     try {
-        const { username, email, password } = req.body;
+        const { username, email, password, first_name, last_name, phone } = req.body;
         if (!username || !email || !password) {
             return res.status(400).json({ error: 'Укажите имя пользователя, email и пароль' });
         }
@@ -22,8 +22,8 @@ router.post('/register', async (req, res) => {
         }
         const hashedPassword = await bcrypt.hash(password, 10);
         await pool.query(
-            'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
-            [username, email, hashedPassword]
+            'INSERT INTO users (username, email, password_hash, first_name, last_name, phone) VALUES (?, ?, ?, ?, ?, ?)',
+            [username, email, hashedPassword, first_name || null, last_name || null, phone || null]
         );
         res.json({ message: 'Пользователь успешно зарегистрирован' });
     } catch (err) {
