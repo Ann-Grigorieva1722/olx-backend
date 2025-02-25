@@ -7,7 +7,7 @@ const router = express.Router();
 router.get('/profile', authenticateToken, async (req, res) => {
     try {
         const [users] = await pool.query(
-            'SELECT id, username, email FROM users WHERE id = ?',
+            'SELECT user_id as id, username, email FROM users WHERE user_id = ?',
             [req.user.id]
         );
         if (users.length === 0) {
@@ -25,25 +25,25 @@ router.put('/profile', authenticateToken, async (req, res) => {
         const { username, email, password, newPassword } = req.body;
         if (username || email) {
             await pool.query(
-                'UPDATE users SET username = COALESCE(?, username), email = COALESCE(?, email) WHERE id = ?',
+                'UPDATE users SET username = COALESCE(?, username), email = COALESCE(?, email) WHERE user_id = ?',
                 [username, email, req.user.id]
             );
         }
         if (password && newPassword) {
             const [users] = await pool.query(
-                'SELECT password FROM users WHERE id = ?',
+                'SELECT password_hash FROM users WHERE user_id = ?',
                 [req.user.id]
             );
             if (users.length === 0) {
                 return res.status(404).json({ error: 'Пользователь не найден' });
             }
-            const valid = await bcrypt.compare(password, users[0].password);
+            const valid = await bcrypt.compare(password, users[0].password_hash);
             if (!valid) {
                 return res.status(400).json({ error: 'Текущий пароль указан неверно' });
             }
             const hashedNewPassword = await bcrypt.hash(newPassword, 10);
             await pool.query(
-                'UPDATE users SET password = ? WHERE id = ?',
+                'UPDATE users SET password_hash = ? WHERE user_id = ?',
                 [hashedNewPassword, req.user.id]
             );
         }

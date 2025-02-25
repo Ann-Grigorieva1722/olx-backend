@@ -20,19 +20,29 @@ const upload = multer({ storage });
 
 router.post('/', authenticateToken, upload.array('photos', 10), async (req, res) => {
     try {
-        const { title, description, category_id, price, location, type } = req.body;
-        if (!title || !description || !category_id || !price || !location || !type) {
+        // Изменили поля: вместо location и type — ожидаем city (city_id) и ad_type (значение типа объявления)
+        const { title, description, category_id, price, city, ad_type } = req.body;
+        if (!title || !description || !category_id || !price || !city || !ad_type) {
             return res.status(400).json({ error: 'Заполните все обязательные поля' });
         }
+
+        // Получаем ad_type_id по типу объявления из таблицы ad_types
+        const [adTypeRows] = await pool.query('SELECT ad_type_id FROM ad_types WHERE type_name = ?', [ad_type]);
+        if (adTypeRows.length === 0) {
+            return res.status(400).json({ error: 'Неверный тип объявления' });
+        }
+        const ad_type_id = adTypeRows[0].ad_type_id;
+        // city ожидается как id города (city_id)
+
         const [result] = await pool.query(
-            'INSERT INTO ads (user_id, title, description, category_id, price, location, type) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [req.user.id, title, description, category_id, price, location, type]
+            'INSERT INTO ads (user_id, category_id, ad_type_id, title, description, price, city_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [req.user.id, category_id, ad_type_id, title, description, price, city]
         );
         const adId = result.insertId;
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
                 await pool.query(
-                    'INSERT INTO ad_photos (ad_id, photo_url) VALUES (?, ?)',
+                    'INSERT INTO photos (ad_id, photo_url) VALUES (?, ?)',
                     [adId, file.path]
                 );
             }
@@ -46,8 +56,8 @@ router.post('/', authenticateToken, upload.array('photos', 10), async (req, res)
 
 router.get('/', async (req, res) => {
     try {
-        const { keyword, category, price_min, price_max, location, sort_by, order } = req.query;
-        let sql = 'SELECT ads.*, GROUP_CONCAT(ad_photos.photo_url) as photos FROM ads LEFT JOIN ad_photos ON ads.id = ad_photos.ad_id';
+        const { keyword, category, price_min, price_max, city, sort_by, order } = req.query;
+        let sql = 'SELECT ads.*, GROUP_CONCAT(photos.photo_url) as photos FROM ads LEFT JOIN photos ON ads.ad_id = photos.ad_id';
         let conditions = [];
         let params = [];
 
@@ -67,14 +77,14 @@ router.get('/', async (req, res) => {
             conditions.push('ads.price <= ?');
             params.push(price_max);
         }
-        if (location) {
-            conditions.push('ads.location LIKE ?');
-            params.push(`%${location}%`);
+        if (city) {
+            conditions.push('ads.city_id = ?');
+            params.push(city);
         }
         if (conditions.length > 0) {
             sql += ' WHERE ' + conditions.join(' AND ');
         }
-        sql += ' GROUP BY ads.id ';
+        sql += ' GROUP BY ads.ad_id ';
         if (sort_by) {
             const sortOrder = order && order.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
             sql += ` ORDER BY ads.${sort_by} ${sortOrder} `;
@@ -90,17 +100,22 @@ router.get('/', async (req, res) => {
 router.put('/:id', authenticateToken, async (req, res) => {
     try {
         const adId = req.params.id;
-        const { title, description, category_id, price, location, type } = req.body;
+        const { title, description, category_id, price, city, ad_type } = req.body;
         const [ads] = await pool.query(
-            'SELECT * FROM ads WHERE id = ? AND user_id = ?',
+            'SELECT * FROM ads WHERE ad_id = ? AND user_id = ?',
             [adId, req.user.id]
         );
         if (ads.length === 0) {
             return res.status(403).json({ error: 'Нет доступа к данному объявлению или объявление не найдено' });
         }
+        const [adTypeRows] = await pool.query('SELECT ad_type_id FROM ad_types WHERE type_name = ?', [ad_type]);
+        if (adTypeRows.length === 0) {
+            return res.status(400).json({ error: 'Неверный тип объявления' });
+        }
+        const ad_type_id = adTypeRows[0].ad_type_id;
         await pool.query(
-            'UPDATE ads SET title = ?, description = ?, category_id = ?, price = ?, location = ?, type = ? WHERE id = ?',
-            [title, description, category_id, price, location, type, adId]
+            'UPDATE ads SET title = ?, description = ?, category_id = ?, ad_type_id = ?, price = ?, city_id = ? WHERE ad_id = ?',
+            [title, description, category_id, ad_type_id, price, city, adId]
         );
         res.json({ message: 'Объявление успешно обновлено' });
     } catch (err) {
@@ -113,14 +128,14 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     try {
         const adId = req.params.id;
         const [ads] = await pool.query(
-            'SELECT * FROM ads WHERE id = ? AND user_id = ?',
+            'SELECT * FROM ads WHERE ad_id = ? AND user_id = ?',
             [adId, req.user.id]
         );
         if (ads.length === 0) {
             return res.status(403).json({ error: 'Нет доступа к данному объявлению или объявление не найдено' });
         }
-        await pool.query('DELETE FROM ad_photos WHERE ad_id = ?', [adId]);
-        await pool.query('DELETE FROM ads WHERE id = ?', [adId]);
+        await pool.query('DELETE FROM photos WHERE ad_id = ?', [adId]);
+        await pool.query('DELETE FROM ads WHERE ad_id = ?', [adId]);
         res.json({ message: 'Объявление успешно удалено' });
     } catch (err) {
         console.error(err);
@@ -132,13 +147,14 @@ router.patch('/:id/mark-sold', authenticateToken, async (req, res) => {
     try {
         const adId = req.params.id;
         const [ads] = await pool.query(
-            'SELECT * FROM ads WHERE id = ? AND user_id = ?',
+            'SELECT * FROM ads WHERE ad_id = ? AND user_id = ?',
             [adId, req.user.id]
         );
         if (ads.length === 0) {
             return res.status(403).json({ error: 'Нет доступа к данному объявлению или объявление не найдено' });
         }
-        await pool.query('UPDATE ads SET is_sold = 1 WHERE id = ?', [adId]);
+        // Если столбца is_sold нет, добавьте его в БД (например, ALTER TABLE ads ADD COLUMN is_sold TINYINT(1) DEFAULT 0)
+        await pool.query('UPDATE ads SET is_sold = 1 WHERE ad_id = ?', [adId]);
         res.json({ message: 'Объявление отмечено как проданное' });
     } catch (err) {
         console.error(err);

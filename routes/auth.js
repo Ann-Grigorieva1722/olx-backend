@@ -22,7 +22,7 @@ router.post('/register', async (req, res) => {
         }
         const hashedPassword = await bcrypt.hash(password, 10);
         await pool.query(
-            'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
+            'INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)',
             [username, email, hashedPassword]
         );
         res.json({ message: 'Пользователь успешно зарегистрирован' });
@@ -46,12 +46,12 @@ router.post('/login', async (req, res) => {
             return res.status(400).json({ error: 'Пользователь не найден' });
         }
         const user = users[0];
-        const valid = await bcrypt.compare(password, user.password);
+        const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) {
             return res.status(400).json({ error: 'Неверный пароль' });
         }
         const token = jwt.sign(
-            { id: user.id, username: user.username, email: user.email },
+            { id: user.user_id, username: user.username, email: user.email },
             JWT_SECRET,
             { expiresIn: '1h' }
         );
@@ -70,7 +70,7 @@ router.post('/reset-password', async (req, res) => {
         }
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         const [result] = await pool.query(
-            'UPDATE users SET password = ? WHERE email = ?',
+            'UPDATE users SET password_hash = ? WHERE email = ?',
             [hashedPassword, email]
         );
         if (result.affectedRows === 0) {
